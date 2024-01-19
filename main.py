@@ -1,8 +1,4 @@
-import pygame
-import os
-import sys
-import sqlite3
-import random
+import pygame, os, sys, sqlite3, random, math
 
 
 W, H = 800, 600
@@ -28,13 +24,26 @@ class Game:
         self.systems_sprites = pygame.sprite.Group()
         self.asteroid_sprites = pygame.sprite.Group()
         self.system_sprites = pygame.sprite.Group()
-        self.all_sprites = [self.system_sprites]
-        self.starter_planet = None
-        self.starter_system = None
+        self.player_sprites = pygame.sprite.Group()
+        self.layout_sprites = pygame.sprite.Group()
+        self.pause_sprites = pygame.sprite.Group()
+        self.back_button = Button('back', FONT, 80, 'white', (400, 500), self.pause_sprites)
+        self.save_button = Button('save', FONT, 80, 'white', (400, 340), self.pause_sprites)
+        self.close_button = Button('close', FONT, 80, 'white', (400, 420), self.pause_sprites)
+        self.pause_text = text_surface('PAUSED', FONT, 120, 'white')
+        self.pause_text_pos = 400, 100
+        self.pause_button = Button('||', FONT, 60, 'white', (782, 28), self.layout_sprites)
         self.stars = self.stars_fill()
         self.planets = self.planets_fill()
-        self.load_map()
-        self.load_system(self.starter_system)
+        self.all_sprites = [self.system_sprites]
+        self.system, self.crds = self.load_map()
+        if self.system:
+            self.load_system(self.system)
+        self.pos_now = [0, 0]
+        self.pos_to = [0, 0]
+        self.speed = 3
+        self.player = Player(self.crds, self.player_sprites)
+        self.paused = False
         self.running = True
 
     def main_loop(self) -> None:
@@ -42,38 +51,88 @@ class Game:
             self.check_events()
             self.screen.fill((0, 0, 0))
             self.screen.blit(self.bg, self.bg.get_rect(topleft=self.bg_pos))
-            for group in self.all_sprites:
-                group.draw(self.screen)
-                group.update()
-            # if self.systems_sprites.
+            if self.paused:
+                self.pause_sprites.draw(self.screen)
+                self.pause_sprites.update()
+                self.screen.blit(self.pause_text, self.pause_text.get_rect(center=self.pause_text_pos))
+            else:
+                if ((self.pos_now[0] - self.pos_to[0]) ** 2 + (self.pos_now[1] - self.pos_to[1]) ** 2) ** 0.5 > 6:
+                    self.player.moving = True
+                    angle = math.atan2(self.pos_now[1] - self.pos_to[1], self.pos_to[0] - self.pos_now[0])
+                    self.pos_now[0] += int(self.speed * math.cos(angle))
+                    self.pos_now[1] -= int(self.speed * math.sin(angle))
+                else:
+                    self.player.moving = False
+                for group in self.all_sprites:
+                    for sprite in group:
+                        sprite.rect.bottomright = self.pos_now[0], self.pos_now[1]
+                    group.draw(self.screen)
+                    group.update()
+                for group in (self.player_sprites, self.layout_sprites):
+                    group.draw(self.screen)
+                    group.update()
             pygame.display.flip()
             CLOCK.tick(FPS)
 
     def check_events(self) -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                self.save()
                 self.running = False
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if self.paused:
+                    if self.back_button.rect.collidepoint(event.pos):
+                        self.paused = False
+                    if self.save_button.rect.collidepoint(event.pos):
+                        self.save()
+                    if self.close_button.rect.collidepoint(event.pos):
+                        self.save()
+                        self.running = False
+                else:
+                    if event.button == 3:
+                        self.pos_to[0] -= event.pos[0] - 400
+                        self.pos_to[1] -= event.pos[1] - 300
+                        self.player.rotate(event.pos)
+                    if self.pause_button.rect.collidepoint(event.pos) and event.button == 1:
+                        self.paused = True
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.paused = -self.paused
+                elif event.key == pygame.K_SPACE and self.system != 0:
+                    self.bg_pos = -random.randrange(2200), -random.randrange(2400)
+                    self.all_sprites = [self.asteroid_sprites, self.systems_sprites,
+                                        self.player_sprites, self.layout_sprites]
+                    # self.player.to_pos, self.player.pos = self.
+                    self.system = 0
 
-    def load_map(self):
-        mp = self.con.cursor().execute('SELECT map FROM worlds WHERE name = "{}"'.format(self.world)).fetchall()[0][0]
+    def load_map(self) -> tuple:
+        mp, system, crds = self.con.cursor().execute('SELECT * FROM worlds WHERE name = "{}"'.format(
+            self.world)).fetchall()[0][2:5]
         try:
             with open('maps/' + mp) as map_file:
                 level = [line.strip() for line in map_file]
-                starter_data = level[0].split(': ')[1].split('_')
-                self.starter_system = int(starter_data[0])
-                self.starter_planet = int(starter_data[1])
+                default_data = [int(i) for i in level[0].split(': ')[1].split(' ')]
+                if system is None:
+                    system = default_data[0]
+                else:
+                    system = int(system)
+                if crds is None:
+                    crds = default_data[1:3]
+                else:
+                    crds = [int(i) for i in crds.split(' ')]
                 for y in range(1, len(level)):
                     for x in range(len(level[0])):
-                        if level[y][x] in '123456789':
-                            pass
+                        if level[y][x] != '.':
+                            Tile(level[y][x], x * P, y * P, self.stars, self.systems_sprites)
+                return system, crds
         except FileNotFoundError:
             print('File "{}" not found'.format(mp))
             sys.exit()
 
-    def load_system(self, n):
+    def load_system(self, n: int) -> None:
         self.system_sprites.remove()
         try:
-            with open('systems/system' + str(self.starter_system) + '.txt') as system_file:
+            with open('systems/system' + str(self.system) + '.txt') as system_file:
                 level = [line.strip() for line in system_file]
                 for y in range(len(level)):
                     for x in range(len(level[0])):
@@ -85,7 +144,7 @@ class Game:
                                                       folder='sprites/random_planets/'), 10, 10, x * S, y * S,
                                            self.system_sprites)
         except FileNotFoundError:
-            print('File "system{}" not found'.format(self.starter_system))
+            print('File "system{}" not found'.format(self.system))
             sys.exit()
 
     def stars_fill(self) -> dict:
@@ -102,6 +161,12 @@ class Game:
                 d[j + 1] = random.choice(os.listdir('sprites/random_planets'))
             b.append(d)
         return b
+
+    def save(self) -> None:
+        self.con.cursor().execute('UPDATE worlds SET system = {}, crds = "{}" WHERE name = "{}"'.format(
+            self.system, f'{int(self.crds[0])} {int(self.crds[1])}', self.world))
+        self.con.commit()
+        self.running = False
 
 
 class MainMenu:
@@ -120,8 +185,14 @@ class MainMenu:
         self.worlds_sprites = pygame.sprite.Group()
         self.no_worlds = None
         if not self.worlds:
-            self.no_worlds = Button('there are no worlds :(', FONT, 80, 'white', (400, 390), self.worlds_sprites,
+            self.no_worlds = Button('there are no worlds :(', FONT, 80, 'white', (400, 375), self.worlds_sprites,
                                     animate=True)
+        else:
+            self.selected_world = 0
+            self.selected = None
+            self.previous = None
+            self.next = None
+            self.existed_worlds()
         self.bg = Image('mainbg.png', (0, 0), self.main_sprites)
         self.logo = Image('logo.png', (148, 93), self.main_sprites, animate=True)
         self.play = Button('PLAY', FONT, 80, 'white', (400, 350), self.menu_sprites, animate=True)
@@ -130,11 +201,6 @@ class MainMenu:
         self.back = Button('BACK', FONT, 80, 'white', (400, 510), self.statistic_sprites, self.select_sprites,
                            self.worlds_sprites, animate=True)
         self.load = Button('LOAD', FONT, 80, 'white', (400, 350), self.select_sprites, animate=True)
-        self.selected = Button(self.worlds[0], FONT, 65, 'white', (400, 370), self.worlds_sprites, animate=True)
-        self.previous = Button('<', FONT, 80, 'white', (self.selected.rect.left - 25, 370), self.worlds_sprites,
-                               animate=True)
-        self.next = Button('>', FONT, 80, 'white', (self.selected.rect.right + 25, 365), self.worlds_sprites,
-                           animate=True)
         self.new = Button('NEW', FONT, 80, 'white', (400, 430), self.select_sprites, animate=True)
         self.sprite_update = [self.main_sprites, self.menu_sprites]
         self.running = True
@@ -178,11 +244,20 @@ class MainMenu:
                     if self.new.rect.collidepoint(event.pos):
                         self.create_world()
                 elif self.worlds_sprites in self.sprite_update:
-                    if self.no_worlds and self.no_worlds.rect.collidepoint(event.pos):
-                        self.create_world()
                     if self.back.rect.collidepoint(event.pos):
                         self.sprite_update.remove(self.worlds_sprites)
                         self.sprite_update.append(self.select_sprites)
+                    elif self.no_worlds and self.no_worlds.rect.collidepoint(event.pos):
+                        self.create_world()
+                    elif self.next.rect.collidepoint(event.pos):
+                        self.selected_world = (self.selected_world + 1) % len(self.worlds)
+                        self.existed_worlds()
+                    elif self.previous.rect.collidepoint(event.pos):
+                        self.selected_world = (self.selected_world - 1) % len(self.worlds)
+                        self.existed_worlds()
+                    elif self.selected.rect.collidepoint(event.pos):
+                        self.world = self.selected.text
+                        self.running = False
 
     def create_world(self) -> None:
         mp = random.choice(os.listdir('maps'))
@@ -192,17 +267,28 @@ class MainMenu:
             if len(existed) >= len(list_of_names):
                 print('Name error')
                 sys.exit()
-            name = random.choice(names.read().split('\n'))
+            name = random.choice(list_of_names)
             while name in existed:
                 name = random.choice(list_of_names)
-        self.con.cursor().execute('INSERT INTO worlds VALUES (NULL, "{}", "{}")'.format(name, mp))
+        self.con.cursor().execute('INSERT INTO worlds VALUES (NULL, "{}", "{}", NULL, NULL)'.format(name, mp))
         self.con.commit()
         self.world = name
         self.running = False
 
+    def existed_worlds(self) -> None:
+        self.worlds_sprites.remove(self.next, self.selected, self.previous)
+        self.selected = Button(self.worlds[self.selected_world], FONT, 65, 'white', (400, 370), self.worlds_sprites,
+                               animate=True)
+        self.previous = Button('<', FONT, 80, 'white', (self.selected.rect.left - 30, 371),
+                               self.worlds_sprites,
+                               animate=True)
+        self.next = Button('>', FONT, 80, 'white', (self.selected.rect.right + 30, 366),
+                           self.worlds_sprites,
+                           animate=True)
+
 
 class Button(pygame.sprite.Sprite):
-    def __init__(self, text: str, font: str, size: int, color, pos: tuple, *group, animate=False) -> None:
+    def __init__(self, text: str, font: str, size: int, color: str, pos: tuple, *group, animate=False) -> None:
         super().__init__(*group)
         self.text = text
         self.image = text_surface(text, font, size, color)
@@ -236,7 +322,7 @@ class Button(pygame.sprite.Sprite):
 
 
 class Image(pygame.sprite.Sprite):
-    def __init__(self, name: str, pos: tuple, *group, animate=False):
+    def __init__(self, name: str, pos: tuple, *group, animate=False) -> None:
         super().__init__(*group)
         self.image = load_image(name)
         self.rect = self.image.get_rect()
@@ -246,7 +332,7 @@ class Image(pygame.sprite.Sprite):
             self.anim_f = False
             self.anim_c = 0
 
-    def update(self):
+    def update(self) -> None:
         if self.animate:
             self.anim_c += 1
             if self.anim_c == FPS:
@@ -259,28 +345,51 @@ class Image(pygame.sprite.Sprite):
 
 
 class Player(pygame.sprite.Sprite):
-    def __init__(self, x, y, *group) -> None:
+    def __init__(self, pos, *group) -> None:
         super().__init__(*group)
-        self.image = load_image('solar.png')
-        self.rect = self.image.get_rect()
+        self.frames = []
+        self.cut_sheet(load_image('ship.png'), 2, 2)
+        self.cur_frame = 0
+        self.angle = 90
+        self.pos = 400, 300
+        self.speed = 3
+        self.image = self.frames[self.cur_frame]
+        self.rect = self.image.get_rect(center=self.pos)
+        self.moving = False
+
+    def cut_sheet(self, sheet, columns, rows) -> None:
+        self.rect = pygame.Rect(0, 0, sheet.get_width() // columns, sheet.get_height() // rows)
+        for j in range(rows):
+            for i in range(columns):
+                frame_location = (self.rect.w * i, self.rect.h * j)
+                self.frames.append(sheet.subsurface(pygame.Rect(frame_location, self.rect.size)))
+
+    def rotate(self, pos) -> None:
+        self.angle = math.degrees(math.atan2(-pos[1] + 300, pos[0] - 400))
+
+    def update(self) -> None:
+        if self.moving:
+            self.cur_frame = (self.cur_frame + 0.8) % len(self.frames)
+        else:
+            self.cur_frame = 0
+        self.image = pygame.transform.rotate(self.frames[int(self.cur_frame)], int(self.angle) - 90)
+        self.rect = self.image.get_rect(center=self.pos)
 
 
 class Tile(pygame.sprite.Sprite):
-    def __init__(self, name, x, y, *group) -> None:
+    def __init__(self, name: str, x: int, y: int, stars, *group) -> None:
         super().__init__(*group)
-        if name == 'p':
-            self.image = load_image('random_planets/' + random.choice(os.listdir('sprites/random_planets')),
-                                    folder='sprites/')
-        elif name == 's':
-            self.image = load_image('solar.png')
+        if name in '123456789':
+            self.image = load_image(stars[int(name)], folder='sprites/random_stars/')
         elif name == 'a':
-            pass
+            self.image = load_image(random.choice(os.listdir('sprites/random_asteroids')),
+                                    folder='sprites/random_asteroids/')
         self.rect = self.image.get_rect()
         self.rect.topleft = (x, y)
 
 
 class AnimatedSprite(pygame.sprite.Sprite):
-    def __init__(self, sheet, columns, rows, x, y, *group):
+    def __init__(self, sheet: pygame.Surface, columns: int, rows: int, x: int, y: int, *group) -> None:
         super().__init__(*group)
         self.frames = []
         self.cut_sheet(sheet, columns, rows)
@@ -320,10 +429,14 @@ def load_image(path, ckey=None, folder='sprites/') -> pygame.Surface:
 
 if __name__ == '__main__':
     pygame.init()
-    menu = MainMenu()
-    while menu.running:
-        menu.main_loop()
-    if menu.world is not None:
-        game = Game(menu.world)
-        while game.running:
-            game.main_loop()
+    while True:
+        menu = MainMenu()
+        while menu.running:
+            menu.main_loop()
+        if menu.world:
+            game = Game(menu.world)
+            while game.running:
+                game.main_loop()
+        else:
+            pygame.quit()
+            sys.exit()
