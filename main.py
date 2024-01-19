@@ -4,6 +4,7 @@ import sys
 import sqlite3
 import random
 import math
+import json
 
 W, H = 800, 600
 FPS = 60
@@ -11,6 +12,8 @@ S = 75
 CLOCK = pygame.time.Clock()
 FONT = 'data/ThaleahFat.ttf'
 DB = 'data/data.db'
+PRICES = {0: 100, 1: 1000, 2: 5000, 3: 15000, 4: 50000, 5: 100000}
+PASSIVE = {0: 0, 1: 20, 2: 50, 3: 150, 4: 600, 5: 2000}
 
 
 class Game:
@@ -50,7 +53,9 @@ class Game:
         self.balance = int(self.con.cursor().execute(
             'SELECT balance FROM worlds WHERE name = "{}"'.format(self.world)).fetchall()[0][0])
         self.balance_text = Button('balance: ' + str(self.balance), FONT, 60, 'white', (400, 550), self.layout_sprites)
-        self.buyed = self.con.cursor().execute('')
+        self.json_file = f'data/{self.world}.json'
+        self.json_data = json.loads(open(self.json_file).read())
+        self.passive = self.count_passive(self.json_data)
         self.paused = False
         self.menued = False
         self.menued_planet = None
@@ -87,6 +92,7 @@ class Game:
                 for group in (self.player_sprites, self.layout_sprites):
                     group.draw(self.screen)
                     group.update()
+            self.balance += self.passive / 60
             self.balance_text.text = 'balance: ' + str(self.balance)
             pygame.display.flip()
             CLOCK.tick(FPS)
@@ -189,13 +195,20 @@ class Game:
             b.append(d)
         return b
 
-    def menu(self):
-        self.menued = True
+    def count_passive(self, data) -> int:
+        k = 0
+        for system in data:
+            for i in system.keys:
+                k += PASSIVE[i]
+        print(k)
+        return k
 
     def save(self) -> None:
         self.con.cursor().execute('UPDATE worlds SET system = {}, crds = "{}", balance = {} WHERE name = "{}"'.format(
             self.system, f'{int(self.pos_now[0])} {int(self.pos_now[1])}', self.balance, self.world))
         self.con.commit()
+        with open(self.json_file, 'w') as jf:
+            jf.writelines(json.dumps(self.buyed, indent=4))
         self.running = False
 
 
@@ -302,6 +315,7 @@ class MainMenu:
                         self.selected_world = (self.selected_world + 1) % len(self.worlds)
                         self.existed_worlds()
                         self.con.cursor().execute('DELETE FROM worlds WHERE name = "{}"'.format(self.selected.text))
+                        os.remove(f'data/{self.world}.json')
 
     def create_world(self) -> None:
         mp = random.choice(os.listdir('maps'))
