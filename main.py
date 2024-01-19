@@ -14,6 +14,7 @@ FONT = 'data/ThaleahFat.ttf'
 DB = 'data/data.db'
 PRICES = {0: 100, 1: 1000, 2: 5000, 3: 15000, 4: 50000, 5: 100000}
 PASSIVE = {0: 0, 1: 20, 2: 50, 3: 150, 4: 600, 5: 2000}
+EMPTY_DICT = json.loads(open('data/empty.json').read())
 
 
 class Game:
@@ -37,6 +38,7 @@ class Game:
         self.save_button = Button('save', FONT, 80, 'white', (400, 340), self.pause_sprites)
         self.close_button = Button('close', FONT, 80, 'white', (400, 420), self.pause_sprites)
         self.pause_text = text_surface('PAUSED', FONT, 120, 'white')
+        self.buy_button = Button('colonise for 100', FONT, 80, 'white', (400, 420), self.menu_sprites)
         self.pause_text_pos = 400, 100
         self.pause_button = Button('||', FONT, 60, 'white', (782, 28), self.layout_sprites)
         self.stars = self.stars_fill()
@@ -54,8 +56,15 @@ class Game:
             'SELECT balance FROM worlds WHERE name = "{}"'.format(self.world)).fetchall()[0][0])
         self.balance_text = Button('balance: ' + str(self.balance), FONT, 60, 'white', (400, 550), self.layout_sprites)
         self.json_file = f'data/{self.world}.json'
-        self.json_data = json.loads(open(self.json_file).read())
-        self.passive = self.count_passive(self.json_data)
+        if os.path.exists(self.json_file):
+            self.buyed = open(self.json_file, 'r').read()
+            if self.buyed:
+                self.buyed = json.loads(self.buyed)
+            else:
+                self.buyed = EMPTY_DICT[:]
+        else:
+            self.buyed = EMPTY_DICT[:]
+        self.passive = self.count_passive(self.buyed)
         self.paused = False
         self.menued = False
         self.menued_planet = None
@@ -93,7 +102,9 @@ class Game:
                     group.draw(self.screen)
                     group.update()
             self.balance += self.passive / 60
-            self.balance_text.text = 'balance: ' + str(self.balance)
+            self.layout_sprites.remove(self.balance_text)
+            self.balance_text = Button('balance: ' + str(int(self.balance)), FONT, 60, 'white', (400, 550),
+                                       self.layout_sprites)
             pygame.display.flip()
             CLOCK.tick(FPS)
 
@@ -114,6 +125,34 @@ class Game:
                 elif self.menued:
                     if self.back_button.rect.collidepoint(event.pos):
                         self.menued = False
+                    if self.buy_button.rect.collidepoint(event.pos):
+                        k = self.buyed[self.system][self.menued_planet.id[3]]
+                        if k < len(PRICES):
+                            price = int(self.buy_button.text.split()[2])
+                            self.menu_sprites.remove(self.buy_button)
+                            if k == 0:
+                                self.buy_button = Button('colonise for 100', FONT, 80, 'white', (400, 420),
+                                                         self.menu_sprites)
+                            else:
+                                self.buy_button = Button('upgrade for ' + str(price), FONT, 80, 'white', (400, 420),
+                                                     self.menu_sprites)
+                            if self.balance >= price:
+                                self.balance -= price
+                                k += 1
+                                self.buyed[self.system][self.menued_planet.id[3]] = k
+                                self.menu_sprites.remove(self.buy_button)
+                                if k < len(PRICES):
+                                    self.buy_button = Button('upgrade for ' + str(PRICES[k]), FONT, 80, 'white',
+                                                             (400, 420), self.menu_sprites)
+                                else:
+                                    self.buy_button = Button('maximum lvl' + str(PRICES[k]), FONT, 80, 'white',
+                                                             (400, 420), self.menu_sprites)
+                                self.passive = self.count_passive(self.buyed)
+                                self.menued = False
+                        else:
+                            self.menu_sprites.remove(self.buy_button)
+                            self.buy_button = Button('maximum lvl', FONT, 80, 'white', (400, 420),
+                                                     self.menu_sprites)
                 else:
                     if event.button == 3:
                         if self.system:
@@ -132,13 +171,16 @@ class Game:
                         sprite = collide[0]
                         if sprite.id[0] == 'p':
                             self.menued_planet = sprite
+                            k = self.buyed[self.system][self.menued_planet.id[3]]
                             self.menued = True
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.paused = -self.paused
                 elif event.key == pygame.K_SPACE:
-                    pass
-                    # TODO: pppp
+                    self.system = (self.system + 1) % 9
+                    self.load_system(self.system)
+                    self.pos_to[0] -= 5
+                    self.pos_to[1] -= 5
 
     def load_map(self) -> tuple:
         mp, system, crds = self.con.cursor().execute('SELECT * FROM worlds WHERE name = "{}"'.format(
@@ -161,7 +203,8 @@ class Game:
             sys.exit()
 
     def load_system(self, n: int) -> None:
-        self.system_sprites.remove()
+        self.asteroid_sprites.empty()
+        self.system_sprites.empty()
         try:
             with open('systems/system' + str(self.system) + '.txt') as system_file:
                 level = [line.strip() for line in system_file]
@@ -198,14 +241,13 @@ class Game:
     def count_passive(self, data) -> int:
         k = 0
         for system in data:
-            for i in system.keys:
-                k += PASSIVE[i]
-        print(k)
+            for i, j in system.items():
+                k += PASSIVE[j]
         return k
 
     def save(self) -> None:
         self.con.cursor().execute('UPDATE worlds SET system = {}, crds = "{}", balance = {} WHERE name = "{}"'.format(
-            self.system, f'{int(self.pos_now[0])} {int(self.pos_now[1])}', self.balance, self.world))
+            self.system, f'{int(self.pos_now[0])} {int(self.pos_now[1])}', int(self.balance), self.world))
         self.con.commit()
         with open(self.json_file, 'w') as jf:
             jf.writelines(json.dumps(self.buyed, indent=4))
@@ -315,7 +357,8 @@ class MainMenu:
                         self.selected_world = (self.selected_world + 1) % len(self.worlds)
                         self.existed_worlds()
                         self.con.cursor().execute('DELETE FROM worlds WHERE name = "{}"'.format(self.selected.text))
-                        os.remove(f'data/{self.world}.json')
+                        if os.path.exists(f'data/{self.world}.json'):
+                            os.remove(f'data/{self.world}.json')
 
     def create_world(self) -> None:
         mp = random.choice(os.listdir('maps'))
@@ -362,6 +405,11 @@ class Button(pygame.sprite.Sprite):
         if self.animate:
             self.anim_f = False
             self.anim_c = 0
+
+    def retext(self, text) -> None:
+        self.text = text
+        self.rect = self.image.get_rect()
+        self.rect.center = self.def_pos
 
     def update(self) -> None:
         if self.rect.collidepoint(pygame.mouse.get_pos()):
