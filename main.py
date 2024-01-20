@@ -104,6 +104,11 @@ class Game:
                 self.menued_planet.update()
                 self.menu_sprites.draw(self.screen)
                 self.menu_sprites.update()
+                self.balance += self.passive / FPS
+                for group in self.balance_text.groups():
+                    group.remove(self.balance_text)
+                self.balance_text = Button('balance: ' + human_read_digit(self.balance), FONT, H // 12, 'white',
+                                           (W // 2, H - 100), self.layout_sprites, self.menu_sprites)
             else:
                 if len(self.asteroid_sprites) <= 50:
                     side = random.randint(1, 4)
@@ -141,13 +146,13 @@ class Game:
                 for group in (self.player_sprites, self.layout_sprites):
                     group.draw(self.screen)
                     group.update()
-            self.layout_sprites.remove(self.hp_text)
-            self.hp_text = Button('hp: ' + str(self.player.hp), FONT, H // 12, 'white', (100, 50), self.layout_sprites)
-            self.balance += self.passive / FPS
-            for group in self.balance_text.groups():
-                group.remove(self.balance_text)
-            self.balance_text = Button('balance: ' + human_read_digit(self.balance), FONT, H // 12, 'white',
-                                       (W // 2, H - 100), self.layout_sprites, self.menu_sprites)
+                self.layout_sprites.remove(self.hp_text)
+                self.hp_text = Button('hp: ' + str(self.player.hp), FONT, H // 12, 'white', (100, 50), self.layout_sprites)
+                self.balance += self.passive / FPS
+                for group in self.balance_text.groups():
+                    group.remove(self.balance_text)
+                self.balance_text = Button('balance: ' + human_read_digit(self.balance), FONT, H // 12, 'white',
+                                           (W // 2, H - 100), self.layout_sprites, self.menu_sprites)
             pygame.display.flip()
             CLOCK.tick(FPS)
 
