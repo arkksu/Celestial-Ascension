@@ -1,1 +1,1 @@
-starter: 1 150 75
+starter: 1 -300 -300

@@ -15,7 +15,7 @@ DB = 'data/data.db'
 PRICES = {0: 100, 1: 1000, 2: 5000, 3: 15000, 4: 50000, 5: 100000}
 PASSIVE = {0: 0, 1: 10, 2: 30, 3: 100, 4: 300, 5: 500, 6: 1000}
 EMPTY_DICT = json.loads(open('data/empty.json').read())
-DIFFICULTY = {'easy': 5, 'medium': 3, 'hard': 1}
+DIFFICULTY = {'easy': 15, 'medium': 5, 'hard': 1}
 
 
 class Game:
@@ -44,13 +44,15 @@ class Game:
                                  self.menu_sprites)
         self.pause_button = Button('||', FONT, H // 12, 'white', (W - 25, 40), self.layout_sprites)
         self.cheat_button = Button('cheat', FONT, H // 12, 'white', (110, H - 40), self.layout_sprites)
+        self.died = Button('', FONT, 1, 'white', (-100, -100), self.layout_sprites,
+                           animate=True)
         self.stars = self.stars_fill()
         self.planets = self.planets_fill()
         self.all_sprites = [self.asteroid_sprites, self.system_sprites]
         self.system, self.crds = self.load_map()
         self.systems = [self.system]
-        self.pos_now = [self.crds[0] - 10 * random.choice((-1, 1)), self.crds[1] - 10 * random.choice((-1, 1))]
-        self.pos_to = list(self.crds)
+        self.pos_now = [10 * random.choice((-1, 1)), 10 * random.choice((-1, 1))]
+        self.pos_to = [0, 0]
         if self.system:
             self.load_system(self.system)
         self.max_speed = 3
@@ -62,12 +64,9 @@ class Game:
                                    (W // 2, H - 100), self.layout_sprites, self.menu_sprites)
         self.difficulty = data[6]
         if data[7] is None:
-            self.player.hp = 5
+            self.player.hp = DIFFICULTY[self.difficulty]
         else:
-            self.player.hp = data[7]
-        self.lifes = data[8]
-        if self.lifes is None:
-            self.lifes = DIFFICULTY[self.difficulty]
+            self.player.hp = int(data[7])
         self.hp_text = Button('hp: ' + str(self.player.hp), FONT, H // 12, 'white', (100, 50), self.layout_sprites)
         self.json_file = f'data/{self.world}.json'
         if os.path.exists(self.json_file):
@@ -89,7 +88,13 @@ class Game:
             self.check_events()
             self.screen.fill((0, 0, 0))
             self.screen.blit(self.bg, self.bg.get_rect(topleft=self.bg_pos))
-            if self.paused:
+            if self.player.hp == 0:
+                self.layout_sprites.empty()
+                self.died = Button('you died', FONT, W // 10, 'white', (W // 2, H // 2), self.layout_sprites,
+                                   animate=True)
+                self.layout_sprites.draw(self.screen)
+                self.layout_sprites.update()
+            elif self.paused:
                 self.pause_sprites.draw(self.screen)
                 self.pause_sprites.update()
                 self.screen.blit(self.pause_text, self.pause_text.get_rect(center=(W // 2, 300)))
@@ -100,6 +105,16 @@ class Game:
                 self.menu_sprites.draw(self.screen)
                 self.menu_sprites.update()
             else:
+                if len(self.asteroid_sprites) <= 50:
+                    side = random.randint(1, 4)
+                    if side == 1:
+                        Tile(self.pos_now[0] - 100, self.pos_now[1] + random.randrange(H) - H, self.asteroid_sprites,
+                             angle=random.randint(-100, 100) / 100, speed=random.randint(1, 5))
+                    else:
+                        pass
+                for i in self.asteroid_sprites:
+                    if ((self.pos_now[0] - i.rect.x) ** 2 + (self.pos_now[1] - i.rect.y) ** 2) ** 0.5 >= 2 * W:
+                        self.asteroid_sprites.remove(i)
                 dest = ((self.pos_now[0] - self.pos_to[0]) ** 2 + (self.pos_now[1] - self.pos_to[1]) ** 2) ** 0.5
                 if dest > 10:
                     self.player.moving = True
@@ -112,15 +127,22 @@ class Game:
                 else:
                     self.speed = 0
                     self.player.moving = False
+                asteroid_collide = pygame.sprite.spritecollide(self.player, self.asteroid_sprites, False)
+                if len(asteroid_collide) == 1 and self.player.damaged is False:
+                    self.player.hp -= 1
+                    self.player.damaged = True
+                for i in asteroid_collide:
+                    self.asteroid_sprites.remove(i)
                 for group in self.all_sprites:
-                    if self.player.moving:
-                        for sprite in group.sprites():
-                            sprite.rect.center = sprite.pos[0] - self.pos_now[0], sprite.pos[1] - self.pos_now[1]
+                    for sprite in group:
+                        sprite.rect.center = sprite.pos[0] - self.pos_now[0], sprite.pos[1] - self.pos_now[1]
                     group.draw(self.screen)
                     group.update()
                 for group in (self.player_sprites, self.layout_sprites):
                     group.draw(self.screen)
                     group.update()
+            self.layout_sprites.remove(self.hp_text)
+            self.hp_text = Button('hp: ' + str(self.player.hp), FONT, H // 12, 'white', (100, 50), self.layout_sprites)
             self.balance += self.passive / FPS
             for group in self.balance_text.groups():
                 group.remove(self.balance_text)
@@ -159,31 +181,35 @@ class Game:
                                     self.systems.append(self.system % 9 + 1)
                                 self.menued = False
                 else:
-                    if event.button == 3:
-                        self.pos_to[0] = self.pos_now[0] + event.pos[0] - W // 2
-                        self.pos_to[1] = self.pos_now[1] + event.pos[1] - H // 2
-                    if self.pause_button.rect.collidepoint(event.pos) and event.button == 1:
-                        self.paused = True
-                    elif self.cheat_button.rect.collidepoint(event.pos) and event.button == 1:
-                        self.balance += 1000000
+                    if self.died.rect.collidepoint(event.pos):
+                        self.save()
+                        self.running = False
                     else:
-                        collide = pygame.sprite.spritecollide(self.player, self.system_sprites, False)
-                        if event.button == 1 and collide:
-                            sprite = collide[0]
-                            if sprite.id[0] == 'p':
-                                self.menued_planet = sprite
-                                k = self.buyed[self.system - 1][self.menued_planet.id[3]]
-                                self.menu_sprites.remove(self.buy_button)
-                                if k == 0:
-                                    self.buy_button = Button('colonise for ' + str(PRICES[k]), FONT, W // 12, 'white',
-                                                             (W // 2, H - 300), self.menu_sprites)
-                                elif k < len(PRICES):
-                                    self.buy_button = Button('upgrade for ' + str(PRICES[k]), FONT, W // 12, 'white',
-                                                             (W // 2, H - 300), self.menu_sprites)
-                                else:
-                                    self.buy_button = Button('maximum lvl', FONT, W // 12, 'white',
-                                                             (W // 2, H - 300), self.menu_sprites)
-                                self.menued = True
+                        if event.button == 3:
+                            self.pos_to[0] = self.pos_now[0] + event.pos[0] - W // 2
+                            self.pos_to[1] = self.pos_now[1] + event.pos[1] - H // 2
+                        if self.pause_button.rect.collidepoint(event.pos) and event.button == 1:
+                            self.paused = True
+                        elif self.cheat_button.rect.collidepoint(event.pos) and event.button == 1:
+                            self.balance += 1000000
+                        else:
+                            collide = pygame.sprite.spritecollide(self.player, self.system_sprites, False)
+                            if event.button == 1 and collide:
+                                sprite = collide[0]
+                                if sprite.id[0] == 'p':
+                                    self.menued_planet = sprite
+                                    k = self.buyed[self.system - 1][self.menued_planet.id[3]]
+                                    self.menu_sprites.remove(self.buy_button)
+                                    if k == 0:
+                                        self.buy_button = Button('colonise for ' + str(PRICES[k]), FONT, W // 12,
+                                                                 'white', (W // 2, H - 300), self.menu_sprites)
+                                    elif k < len(PRICES):
+                                        self.buy_button = Button('upgrade for ' + str(PRICES[k]), FONT, W // 12,
+                                                                 'white', (W // 2, H - 300), self.menu_sprites)
+                                    else:
+                                        self.buy_button = Button('maximum lvl', FONT, W // 12, 'white',
+                                                                 (W // 2, H - 300), self.menu_sprites)
+                                    self.menued = True
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.paused = -self.paused
@@ -224,14 +250,15 @@ class Game:
                     for x in range(len(level[0])):
                         if level[y][x] == 's':
                             AnimatedSprite('s', load_image(self.stars[n], folder='sprites/random_stars/'), 50,
-                                           1, x * S + self.pos_now[0] - 25, y * S + self.pos_now[1] - 25,
+                                           1, x * S - 25, y * S - 25,
                                            self.system_sprites)
                         elif level[y][x] in '123':
                             AnimatedSprite(f'p: {level[y][x]}', load_image(
                                 self.planets[n - 1][int(level[y][x])], folder='sprites/random_planets/'), 10,
-                                           10, x * S + self.pos_now[0], y * S + self.pos_now[1], self.system_sprites)
+                                           10, x * S, y * S,
+                                           self.system_sprites)
                         elif level[y][x] == 'a':
-                            Tile(x * S + self.pos_now[0], y * S + self.pos_now[1], self.system_sprites)
+                            Tile(x * S, y * S, self.system_sprites)
         except FileNotFoundError:
             print('File "system{}" not found'.format(self.system))
             sys.exit()
@@ -403,7 +430,7 @@ class MainMenu:
             while name in existed:
                 name = random.choice(list_of_names)
         self.con.cursor().execute(
-            'INSERT INTO worlds VALUES (NULL, "{}", "{}", NULL, NULL, 100, "{}", NULL, NULL)'.format(name, mp,
+            'INSERT INTO worlds VALUES (NULL, "{}", "{}", NULL, NULL, 100, "{}", NULL)'.format(name, mp,
                                                                                                      difficulty))
         self.con.commit()
         self.world = name
@@ -492,12 +519,14 @@ class Player(pygame.sprite.Sprite):
         self.frames = []
         self.cut_sheet(load_image('ship.png'), 2, 2)
         self.cur_frame = 0
-        self.hp = 5
+        self.hp = 1
         self.angle = 90
         self.pos = W // 2, H // 2
         self.speed = 3
         self.image = self.frames[self.cur_frame]
         self.rect = self.image.get_rect(center=self.pos)
+        self.damaged = False
+        self.damaged_count = FPS * 2
         self.moving = False
 
     def cut_sheet(self, sheet, columns, rows) -> None:
@@ -511,22 +540,44 @@ class Player(pygame.sprite.Sprite):
         self.angle = angle
 
     def update(self) -> None:
-        if self.moving:
-            self.cur_frame = (self.cur_frame + 0.8) % len(self.frames)
+        if self.damaged:
+            self.damaged_count -= 1
+            if self.damaged_count == 0:
+                self.damaged = False
+                self.damaged_count = FPS * 2
+            if self.damaged_count % 2 == 0:
+                if self.moving:
+                    self.cur_frame = (self.cur_frame + 0.8) % len(self.frames)
+                else:
+                    self.cur_frame = 0
+                self.image = pygame.transform.rotate(self.frames[int(self.cur_frame)], int(self.angle) - 90)
+                self.rect = self.image.get_rect(center=self.pos)
+            else:
+                self.image = pygame.Surface(self.image.get_size())
+                self.rect = self.image.get_rect()
         else:
-            self.cur_frame = 0
-        self.image = pygame.transform.rotate(self.frames[int(self.cur_frame)], int(self.angle) - 90)
-        self.rect = self.image.get_rect(center=self.pos)
+            if self.moving:
+                self.cur_frame = (self.cur_frame + 0.8) % len(self.frames)
+            else:
+                self.cur_frame = 0
+            self.image = pygame.transform.rotate(self.frames[int(self.cur_frame)], int(self.angle) - 90)
+            self.rect = self.image.get_rect(center=self.pos)
 
 
 class Tile(pygame.sprite.Sprite):
-    def __init__(self, x: int, y: int, *group) -> None:
+    def __init__(self, x: int, y: int, *group, angle=0.0, speed=0) -> None:
         super().__init__(*group)
         self.image = load_image(random.choice(os.listdir('sprites/random_asteroids')),
                                 folder='sprites/random_asteroids/')
-        self.pos = x, y
+        self.pos = [x, y]
         self.rect = self.image.get_rect()
         self.rect.center = self.pos
+        self.angle = angle
+        self.speed = speed
+
+    def update(self):
+        self.pos[0] += self.speed * math.cos(self.angle)
+        self.pos[1] -= self.speed * math.sin(self.angle)
 
 
 class AnimatedSprite(pygame.sprite.Sprite):
