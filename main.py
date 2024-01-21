@@ -49,7 +49,7 @@ class Game:
         self.stars = self.stars_fill()
         self.planets = self.planets_fill()
         self.all_sprites = [self.asteroid_sprites, self.system_sprites]
-        self.system, self.crds = self.load_map()
+        self.system, self.crds = self.load_data()
         self.systems = [self.system]
         self.pos_now = [10 * random.choice((-1, 1)), 10 * random.choice((-1, 1))]
         self.pos_to = [0, 0]
@@ -59,14 +59,14 @@ class Game:
         self.speed = 0
         self.player = Player(self.player_sprites)
         data = self.con.cursor().execute('SELECT * FROM worlds WHERE name = "{}"'.format(self.world)).fetchone()
-        self.balance = data[5]
+        self.balance = data[4]
         self.balance_text = Button('balance: ' + human_read_digit(self.balance), FONT, H // 12, 'white',
                                    (W // 2, H - 100), self.layout_sprites, self.menu_sprites)
-        self.difficulty = data[6]
-        if data[7] is None:
+        self.difficulty = data[5]
+        if data[6] is None:
             self.player.hp = DIFFICULTY[self.difficulty]
         else:
-            self.player.hp = int(data[7])
+            self.player.hp = int(data[6])
         self.hp_text = Button('hp: ' + str(self.player.hp), FONT, H // 12, 'white', (100, 50), self.layout_sprites)
         self.json_file = f'data/{self.world}.json'
         if os.path.exists(self.json_file):
@@ -104,19 +104,19 @@ class Game:
                 self.menued_planet.update()
                 self.menu_sprites.draw(self.screen)
                 self.menu_sprites.update()
-                self.balance += self.passive / FPS
                 for group in self.balance_text.groups():
                     group.remove(self.balance_text)
                 self.balance_text = Button('balance: ' + human_read_digit(self.balance), FONT, H // 12, 'white',
                                            (W // 2, H - 100), self.layout_sprites, self.menu_sprites)
             else:
-                if len(self.asteroid_sprites) <= 50:
-                    side = random.randint(1, 4)
+                if len(self.asteroid_sprites) <= 30:
+                    side = random.randint(1, 2)
                     if side == 1:
-                        Tile(self.pos_now[0] - 100, self.pos_now[1] + random.randrange(H) - H, self.asteroid_sprites,
-                             angle=random.randint(-100, 100) / 100, speed=random.randint(1, 5))
-                    else:
-                        pass
+                        Tile(self.pos_now[0] - 100, self.pos_now[1] + random.randrange(2 * H) - H, self.asteroid_sprites,
+                             angle=random.randint(-100, 100) / 100, speed=random.randint(1, 4))
+                    elif side == 2:
+                        Tile(self.pos_now[0] + random.randrange(2 * H) - H, self.pos_now[1] - 100, self.asteroid_sprites,
+                             angle=random.randint(-300, -100) / 100, speed=random.randint(1, 4))
                 for i in self.asteroid_sprites:
                     if ((self.pos_now[0] - i.rect.x) ** 2 + (self.pos_now[1] - i.rect.y) ** 2) ** 0.5 >= 2 * W:
                         self.asteroid_sprites.remove(i)
@@ -133,10 +133,10 @@ class Game:
                     self.speed = 0
                     self.player.moving = False
                 asteroid_collide = pygame.sprite.spritecollide(self.player, self.asteroid_sprites, False)
-                if len(asteroid_collide) == 1 and self.player.damaged is False:
-                    self.player.hp -= 1
-                    self.player.damaged = True
                 for i in asteroid_collide:
+                    if self.player.damaged is False:
+                        self.player.hp -= 1
+                        self.player.damaged = True
                     self.asteroid_sprites.remove(i)
                 for group in self.all_sprites:
                     for sprite in group:
@@ -187,7 +187,6 @@ class Game:
                                 self.menued = False
                 else:
                     if self.died.rect.collidepoint(event.pos):
-                        self.save()
                         self.running = False
                     else:
                         if event.button == 3:
@@ -218,32 +217,25 @@ class Game:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.paused = -self.paused
-                elif event.key == pygame.K_SPACE:  # TODO: check for max lvl
+                elif event.key == pygame.K_SPACE:
                     system = self.system
                     self.system = self.systems[(self.systems.index(self.system) + 1) % len(self.systems)]
                     if system != self.system:
                         self.load_system(self.system)
                         self.bg_pos = -random.randrange(3000 - W), -random.randrange(3000 - H)
 
-    def load_map(self) -> tuple:
+    def load_data(self) -> tuple:
         mp, system, crds = self.con.cursor().execute('SELECT * FROM worlds WHERE name = "{}"'.format(
-            self.world)).fetchall()[0][2:5]
-        try:
-            with open('maps/' + mp) as map_file:
-                level = [line.strip() for line in map_file]
-                default_data = [int(i) for i in level[0].split(': ')[1].split(' ')]
-                if system is None:
-                    system = default_data[0]
-                else:
-                    system = int(system)
-                if crds is None:
-                    crds = default_data[1:3]
-                else:
-                    crds = [int(i) for i in crds.split(' ')]
-                return system, crds
-        except FileNotFoundError:
-            print('File "{}" not found'.format(mp))
-            sys.exit()
+            self.world)).fetchall()[0][1:4]
+        if system is None:
+            system = 1
+        else:
+            system = int(system)
+        if crds is None:
+            crds = [0, 0]
+        else:
+            crds = [int(i) for i in crds.split(' ')]
+        return system, crds
 
     def load_system(self, n: int) -> None:
         self.asteroid_sprites.empty()
@@ -424,7 +416,6 @@ class MainMenu:
                             os.remove(f'data/{world_to_delete}.json')
 
     def create_world(self, difficulty) -> None:
-        mp = random.choice(os.listdir('maps'))
         existed = [i[0] for i in self.con.cursor().execute('SELECT name FROM worlds').fetchall()]
         with open('data/galaxy_names.txt', 'r') as names:
             list_of_names = names.read().split('\n')
@@ -435,7 +426,7 @@ class MainMenu:
             while name in existed:
                 name = random.choice(list_of_names)
         self.con.cursor().execute(
-            'INSERT INTO worlds VALUES (NULL, "{}", "{}", NULL, NULL, 100, "{}", NULL)'.format(name, mp,
+            'INSERT INTO worlds VALUES (NULL, "{}", NULL, NULL, 100, "{}", NULL)'.format(name,
                                                                                                      difficulty))
         self.con.commit()
         self.world = name
@@ -638,7 +629,6 @@ if __name__ == '__main__':
     pygame.init()
     while True:
         menu = MainMenu()
-        # menu.world = 'Cosmos Serenity'
         while menu.running:
             menu.main_loop()
         if menu.world:
